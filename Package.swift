@@ -16,6 +16,7 @@ let package = Package(
         .iOSApplication(
             name: "Korah_App",
             targets: ["AppModule"],
+            bundleIdentifier: "com.korahorg.korah",
             teamIdentifier: "34JPJ689V8",
             displayVersion: "1.0",
             bundleVersion: "1",
