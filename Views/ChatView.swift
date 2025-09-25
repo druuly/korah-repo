@@ -10,11 +10,37 @@ struct OpenAIResponse: Decodable {
     struct Choice: Decodable {
         struct Message: Decodable {
             let role: String
-            let content: String
+            let content: String?
         }
         let message: Message
+        let finishReason: String?
+        let index: Int?
+        
+        private enum CodingKeys: String, CodingKey {
+            case message
+            case finishReason = "finish_reason"
+            case index
+        }
     }
+    
+    struct Usage: Decodable {
+        let promptTokens: Int?
+        let completionTokens: Int?
+        let totalTokens: Int?
+        
+        private enum CodingKeys: String, CodingKey {
+            case promptTokens = "prompt_tokens"
+            case completionTokens = "completion_tokens"
+            case totalTokens = "total_tokens"
+        }
+    }
+    
+    let id: String?
+    let object: String?
+    let created: Int?
+    let model: String?
     let choices: [Choice]
+    let usage: Usage?
 }
 
 struct ChatView: View {
@@ -99,8 +125,9 @@ struct ChatView: View {
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        // 🔐 PUT YOUR API KEY HERE:
-        let apiKey = "Bearer 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"; request.addValue(apiKey, forHTTPHeaderField: "Authorization")
+        // 🔐 PUT YOUR ACTUAL API KEY HERE
+        let apiKey = "Bearer "
+        request.addValue(apiKey, forHTTPHeaderField: "Authorization")
         
         let apiMessages = messages.map { ["role": $0.role, "content": $0.content] }
         let body: [String: Any] = [
@@ -115,20 +142,58 @@ struct ChatView: View {
 
             if let error = error {
                 print("Request error: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    self.messages.append(Message(role: "assistant", content: "Network error: \(error.localizedDescription)"))
+                }
                 return
             }
 
-            guard let data = data else { return }
+            guard let data = data else {
+                DispatchQueue.main.async {
+                    self.messages.append(Message(role: "assistant", content: "No data received from server"))
+                }
+                return
+            }
+            
+            // Check HTTP status code
+            if let httpResponse = response as? HTTPURLResponse {
+                if httpResponse.statusCode != 200 {
+                    // Try to parse error response
+                    if let errorDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let error = errorDict["error"] as? [String: Any],
+                       let message = error["message"] as? String {
+                        DispatchQueue.main.async {
+                            self.messages.append(Message(role: "assistant", content: "API Error: \(message)"))
+                        }
+                    } else {
+                        DispatchQueue.main.async {
+                            self.messages.append(Message(role: "assistant", content: "HTTP Error \(httpResponse.statusCode): Check your API key"))
+                        }
+                    }
+                    return
+                }
+            }
 
+            // Try to decode successful response
             do {
                 let decoded = try JSONDecoder().decode(OpenAIResponse.self, from: data)
-                if let content = decoded.choices.first?.message.content {
+                if let content = decoded.choices.first?.message.content, !content.isEmpty {
                     DispatchQueue.main.async {
                         self.messages.append(Message(role: "assistant", content: content.trimmingCharacters(in: .whitespacesAndNewlines)))
                     }
+                } else {
+                    DispatchQueue.main.async {
+                        self.messages.append(Message(role: "assistant", content: "Received empty response from AI"))
+                    }
                 }
             } catch {
-                print("Decoding error: \(error.localizedDescription)")
+                // If JSON decoding fails, show the raw response for debugging
+                let responseString = String(data: data, encoding: .utf8) ?? "Unable to read response"
+                print("Decoding error: \(error)")
+                print("Raw response: \(responseString)")
+                DispatchQueue.main.async {
+                    self.messages.append(Message(role: "assistant", content: "JSON decode error. Check console for details."))
+                }
             }
         }.resume()
     }
